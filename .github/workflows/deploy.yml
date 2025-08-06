@@ -20,6 +20,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.ANSIBLE_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Run Ansible Playbook
+      - name: Run Ansible Playbook 1
         run: |
           ssh -i ~/.ssh/id_rsa ec2-user@${{ secrets.ANSIBLE_HOST }} "ansible-playbook ~/deploy.yml"
