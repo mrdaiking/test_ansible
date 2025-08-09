@@ -60,19 +60,21 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          if [[ -n "${{ secrets.ANSIBLE_HOST }}" ]]; then
-            # Don't fail the job if keyscan can't reach the host yet
-            ssh-keyscan -H "${{ secrets.ANSIBLE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-          fi
+          for host in "${{ secrets.ANSIBLE_HOST }}" "${{ secrets.ANSIBLE_APP_HOST }}"; do
+            if [[ -n "$host" ]]; then
+              ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
+            fi
+          done
 
       - name: Show runner public IP (for Security Group allowlist)
         shell: bash
         run: |
           set -euo pipefail
           echo "Runner public IP:" $(curl -fsSL https://checkip.amazonaws.com || echo "unknown")
-          echo "Target host: ${{ secrets.ANSIBLE_HOST }}"
+          echo "Ansible host: ${{ secrets.ANSIBLE_HOST }}"
+          echo "App host: ${{ secrets.ANSIBLE_APP_HOST }}"
 
-      - name: Check SSH reachability to target
+      - name: Check SSH reachability to Ansible host
         shell: bash
         run: |
           set -euo pipefail
@@ -80,27 +82,38 @@ jobs:
           echo "Checking TCP/22 to ${HOST}..."
           if command -v nc >/dev/null 2>&1; then
             nc -vz -w 5 "$HOST" 22 || {
-              echo "Cannot reach ${HOST}:22 from GitHub runner. Likely Security Group, NACL, subnet, or no public IP." >&2
+              echo "Cannot reach ${HOST}:22 from GitHub runner. Fix SG/NACL/public IP." >&2
               exit 1
             }
           else
-            # Fallback using bash's /dev/tcp
             timeout 6 bash -c "</dev/tcp/${HOST}/22" 2>/dev/null || {
-              echo "Cannot reach ${HOST}:22 from GitHub runner. Likely Security Group, NACL, subnet, or no public IP." >&2
+              echo "Cannot reach ${HOST}:22 from GitHub runner. Fix SG/NACL/public IP." >&2
               exit 1
             }
           fi
 
-      - name: Run Ansible Playbook 1
+      - name: Run Ansible Playbook (remote control on AL2)
         shell: bash
         run: |
           set -euo pipefail
-          : "${{ secrets.ANSIBLE_HOST }}" # ensure secret is present
+          : "${{ secrets.ANSIBLE_HOST }}" # AL2 control host
+          : "${{ secrets.ANSIBLE_APP_HOST }}"     # AL2023 app host
           USER_TO_USE="ec2-user"
-          # Prepare remote directory (handle prior root-owned dirs)
+          # Prepare working dir on AL2 control host
           ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "sudo install -d -m 755 -o ${USER_TO_USE} -g ${USER_TO_USE} /home/${USER_TO_USE}/deploy"
+          # Ensure ~/.ssh exists on control host (key already present: /home/ec2-user/.ssh/jbc-dev-key.pem)
+          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "install -d -m 700 /home/${USER_TO_USE}/.ssh"
+          # Upload playbook
           scp -o StrictHostKeyChecking=no ansible/deploy.yml "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/deploy.yml"
-          # Ensure Ansible is installed on the EC2 host (Amazon Linux/Ubuntu compatible)
+          # Upload inventory pointing to the AL2023 app host
+          INVENTORY=$(mktemp)
+          cat > "$INVENTORY" <<'INV'
+          [nextjs_servers]
+          app ansible_host=${{ secrets.ANSIBLE_APP_HOST }} ansible_user=ec2-user ansible_ssh_private_key_file=/home/ec2-user/.ssh/jbc-dev-key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          INV
+          scp -o StrictHostKeyChecking=no "$INVENTORY" "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/inventory.ini"
+          rm -f "$INVENTORY"
+          # Ensure Ansible is installed on the AL2 control host
           ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" '
             set -euo pipefail
             if ! command -v ansible-playbook >/dev/null 2>&1; then
@@ -108,18 +121,17 @@ jobs:
                 sudo yum -y install python3-pip || sudo yum -y install python3
                 python3 -m pip install --user ansible
                 echo "export PATH=\"$HOME/.local/bin:$PATH\"" >> ~/.bashrc
-              elif command -v apt-get >/dev/null 2>&1; then
-                sudo apt-get update -y
-                sudo apt-get install -y ansible
+              elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf -y install ansible
               fi
             fi
           '
-          # Run the playbook locally on the EC2 host (fallback to ~/.local/bin)
+          # Run playbook on the AL2 control host, targeting the AL2023 app host
           ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "\
             if command -v ansible-playbook >/dev/null 2>&1; then \
-              ansible-playbook /home/${USER_TO_USE}/deploy/deploy.yml; \
+              ansible-playbook -i /home/${USER_TO_USE}/deploy/inventory.ini /home/${USER_TO_USE}/deploy/deploy.yml; \
             elif [ -x \"$HOME/.local/bin/ansible-playbook\" ]; then \
-              \"$HOME/.local/bin/ansible-playbook\" /home/${USER_TO_USE}/deploy/deploy.yml; \
+              \"$HOME/.local/bin/ansible-playbook\" -i /home/${USER_TO_USE}/deploy/inventory.ini /home/${USER_TO_USE}/deploy/deploy.yml; \
             else \
-              PATH=\"$HOME/.local/bin:$PATH\" ansible-playbook /home/${USER_TO_USE}/deploy/deploy.yml; \
+              PATH=\"$HOME/.local/bin:$PATH\" ansible-playbook -i /home/${USER_TO_USE}/deploy/inventory.ini /home/${USER_TO_USE}/deploy/deploy.yml; \
             fi"
