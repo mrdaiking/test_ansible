@@ -13,11 +13,46 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Start ssh-agent and add key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+      - name: Start ssh-agent and add key (robust)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # Normalize the key from secret: supports raw PEM, base64, or escaped newlines
+          TMP_KEY=$(mktemp)
+          printf "%s" "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > "$TMP_KEY"
+          # Convert Windows CRLF and unescape literal \n
+          # If the file contains literal backslash-n sequences, convert them to real newlines
+          if grep -q "\\\\n" "$TMP_KEY"; then
+            sed 's/\\\\n/\n/g' "$TMP_KEY" > "$TMP_KEY.conv"
+            mv "$TMP_KEY.conv" "$TMP_KEY"
+          fi
+          # Strip any CR characters
+          tr -d '\r' < "$TMP_KEY" > "$TMP_KEY.nocr"
+          mv "$TMP_KEY.nocr" "$TMP_KEY"
+          # Detect if it's PEM; if not, try base64 decode
+          if grep -q "BEGIN .*PRIVATE KEY" "$TMP_KEY"; then
+            cp "$TMP_KEY" ~/.ssh/id_rsa
+          else
+            if base64 -d "$TMP_KEY" > ~/.ssh/id_rsa 2>/dev/null; then
+              :
+            else
+              echo "Private key secret is neither PEM nor valid base64; please fix ANSIBLE_SSH_PRIVATE_KEY." >&2
+              exit 1
+            fi
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          # Validate key
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1; then
+            echo "Invalid private key format; ensure the secret contains an unencrypted private key." >&2
+            exit 1
+          fi
+          # Start agent and add key
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+          rm -f "$TMP_KEY"
 
       - name: Prepare known_hosts (optional)
         shell: bash
