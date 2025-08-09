@@ -99,22 +99,24 @@ jobs:
           : "${{ secrets.ANSIBLE_HOST }}" # AL2 control host
           : "${{ secrets.ANSIBLE_APP_HOST }}"     # AL2023 app host
           USER_TO_USE="ec2-user"
+          # Use SSH keepalives to avoid broken pipe during long-running tasks
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes"
           # Prepare working dir on AL2 control host
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "sudo install -d -m 755 -o ${USER_TO_USE} -g ${USER_TO_USE} /home/${USER_TO_USE}/deploy"
+          ssh ${SSH_OPTS} "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "sudo install -d -m 755 -o ${USER_TO_USE} -g ${USER_TO_USE} /home/${USER_TO_USE}/deploy"
           # Ensure ~/.ssh exists on control host (key already present: /home/ec2-user/.ssh/jbc-dev-key.pem)
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "install -d -m 700 /home/${USER_TO_USE}/.ssh"
+          ssh ${SSH_OPTS} "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "install -d -m 700 /home/${USER_TO_USE}/.ssh"
           # Upload playbook
-          scp -o StrictHostKeyChecking=no ansible/deploy.yml "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/deploy.yml"
+          scp ${SSH_OPTS} ansible/deploy.yml "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/deploy.yml"
           # Upload inventory pointing to the AL2023 app host
           INVENTORY=$(mktemp)
           cat > "$INVENTORY" <<'INV'
           [nextjs_servers]
           app ansible_host=${{ secrets.ANSIBLE_APP_HOST }} ansible_user=ec2-user ansible_ssh_private_key_file=/home/ec2-user/.ssh/jbc-dev-key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
           INV
-          scp -o StrictHostKeyChecking=no "$INVENTORY" "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/inventory.ini"
+          scp ${SSH_OPTS} "$INVENTORY" "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/inventory.ini"
           rm -f "$INVENTORY"
           # Ensure Ansible is installed on the AL2 control host
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" '
+          ssh ${SSH_OPTS} "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" '
             set -euo pipefail
             if ! command -v ansible-playbook >/dev/null 2>&1; then
               if command -v yum >/dev/null 2>&1; then
@@ -127,7 +129,7 @@ jobs:
             fi
           '
           # Run playbook on the AL2 control host, targeting the AL2023 app host
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "\
+          ssh ${SSH_OPTS} "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "\
             if command -v ansible-playbook >/dev/null 2>&1; then \
               ansible-playbook -i /home/${USER_TO_USE}/deploy/inventory.ini /home/${USER_TO_USE}/deploy/deploy.yml; \
             elif [ -x \"$HOME/.local/bin/ansible-playbook\" ]; then \
