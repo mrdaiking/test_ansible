@@ -97,8 +97,8 @@ jobs:
           set -euo pipefail
           : "${{ secrets.ANSIBLE_HOST }}" # ensure secret is present
           USER_TO_USE="ec2-user"
-          # Prepare remote directory and upload playbook
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "mkdir -p /home/${USER_TO_USE}/deploy && chmod 755 /home/${USER_TO_USE}/deploy"
+          # Prepare remote directory (handle prior root-owned dirs)
+          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "sudo install -d -m 755 -o ${USER_TO_USE} -g ${USER_TO_USE} /home/${USER_TO_USE}/deploy"
           scp -o StrictHostKeyChecking=no ansible/deploy.yml "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}:/home/${USER_TO_USE}/deploy/deploy.yml"
           # Ensure Ansible is installed on the EC2 host (Amazon Linux/Ubuntu compatible)
           ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" '
@@ -114,5 +114,12 @@ jobs:
               fi
             fi
           '
-          # Run the playbook locally on the EC2 host
-          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "ansible-playbook /home/${USER_TO_USE}/deploy/deploy.yml"
+          # Run the playbook locally on the EC2 host (fallback to ~/.local/bin)
+          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "\
+            if command -v ansible-playbook >/dev/null 2>&1; then \
+              ansible-playbook /home/${USER_TO_USE}/deploy/deploy.yml; \
+            elif [ -x \"$HOME/.local/bin/ansible-playbook\" ]; then \
+              \"$HOME/.local/bin/ansible-playbook\" /home/${USER_TO_USE}/deploy/deploy.yml; \
+            else \
+              PATH=\"$HOME/.local/bin:$PATH\" ansible-playbook /home/${USER_TO_USE}/deploy/deploy.yml; \
+            fi"
