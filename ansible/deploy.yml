@@ -101,8 +101,8 @@
           npm install
         fi
       args:
-  chdir: "{{ working_dir }}"
-  executable: /bin/bash
+        chdir: "{{ working_dir }}"
+        executable: /bin/bash
 
     - name: Build Next.js app
       become_user: "{{ app_owner }}"
@@ -110,8 +110,8 @@
         set -e
         npm run build
       args:
-  chdir: "{{ working_dir }}"
-  executable: /bin/bash
+        chdir: "{{ working_dir }}"
+        executable: /bin/bash
 
     - name: Start or restart app with PM2
       become_user: "{{ app_owner }}"
@@ -120,5 +120,5 @@
         pm2 start npm --name "nextjs-app" -- run start || pm2 restart nextjs-app
         pm2 save
       args:
-  chdir: "{{ working_dir }}"
-  executable: /bin/bash
+        chdir: "{{ working_dir }}"
+        executable: /bin/bash
