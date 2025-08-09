@@ -1,0 +1,108 @@
+---
+- name: Deploy Next.js app to EC2 (local)
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  become: yes
+  vars:
+    app_dir: /home/ec2-user/app
+    app_owner: ec2-user
+    app_group: ec2-user
+    app_repo: https://github.com/mrdaiking/test_ansible.git
+    app_branch: main
+    app_subdir: my-nextjs-app
+    node_version: "18"
+  tasks:
+    - name: Ensure prerequisites are installed (git, curl)
+      ansible.builtin.package:
+        name:
+          - git
+          - curl
+        state: present
+
+    - name: Ensure application directory exists
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "0755"
+
+    - name: Checkout application repository
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ app_branch }}"
+        force: yes
+        update: yes
+      become_user: "{{ app_owner }}"
+
+    - name: Install NVM for ec2-user if missing
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        if [ ! -d "$NVM_DIR" ]; then
+          curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Install Node.js {{ node_version }} via NVM and set default
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        nvm install {{ node_version }}
+        nvm alias default {{ node_version }}
+      args:
+        executable: /bin/bash
+
+    - name: Ensure pm2 is installed globally
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        npm install -g pm2
+      args:
+        executable: /bin/bash
+
+    - name: Install dependencies (npm ci if lockfile exists)
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        if [ -f package-lock.json ]; then
+          npm ci
+        else
+          npm install
+        fi
+      args:
+        chdir: "{{ app_dir }}/{{ app_subdir }}"
+        executable: /bin/bash
+
+    - name: Build Next.js app
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        npm run build
+      args:
+        chdir: "{{ app_dir }}/{{ app_subdir }}"
+        executable: /bin/bash
+
+    - name: Start or restart app with PM2
+      become_user: "{{ app_owner }}"
+      ansible.builtin.shell: |
+        set -e
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        pm2 start npm --name "nextjs-app" -- run start || pm2 restart nextjs-app
+        pm2 save
+      args:
+        chdir: "{{ app_dir }}/{{ app_subdir }}"
+        executable: /bin/bash
