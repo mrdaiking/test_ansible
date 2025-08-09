@@ -51,6 +51,15 @@
         update: yes
       become_user: "{{ app_owner }}"
 
+    - name: Determine if app_subdir exists
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/{{ app_subdir }}"
+      register: app_subdir_path
+
+    - name: Set working_dir
+      ansible.builtin.set_fact:
+        working_dir: "{{ app_dir ~ '/' ~ app_subdir if (app_subdir_path.stat.isdir | default(false)) else app_dir }}"
+
     - name: Install Node.js 18.x on Amazon Linux 2023
       when: ansible_facts.distribution == 'Amazon' and ansible_facts.distribution_major_version == '2023' and (node_check.rc is defined and node_check.rc != 0)
       ansible.builtin.shell: |
@@ -92,7 +101,7 @@
           npm install
         fi
       args:
-        chdir: "{{ app_dir }}/{{ app_subdir }}"
+  chdir: "{{ working_dir }}"
         executable: /bin/bash
 
     - name: Build Next.js app
@@ -101,7 +110,7 @@
         set -e
         npm run build
       args:
-        chdir: "{{ app_dir }}/{{ app_subdir }}"
+  chdir: "{{ working_dir }}"
         executable: /bin/bash
 
     - name: Start or restart app with PM2
@@ -111,5 +120,5 @@
         pm2 start npm --name "nextjs-app" -- run start || pm2 restart nextjs-app
         pm2 save
       args:
-        chdir: "{{ app_dir }}/{{ app_subdir }}"
+  chdir: "{{ working_dir }}"
         executable: /bin/bash
