@@ -91,18 +91,50 @@
       args:
         executable: /bin/bash
 
+    - name: Check if any swap is active
+      ansible.builtin.command: swapon --noheadings --show=NAME
+      register: swap_status
+      ignore_errors: true
+      changed_when: false
+
+    - name: Ensure 2G swapfile exists and is active (to avoid OOM during npm install)
+      when: (swap_status.stdout | trim) == ""
+      block:
+        - name: Allocate swapfile
+          ansible.builtin.command: fallocate -l 2G /swapfile
+          args:
+            creates: /swapfile
+        - name: Set swapfile permissions
+          ansible.builtin.file:
+            path: /swapfile
+            mode: "0600"
+        - name: Format swapfile
+          ansible.builtin.command: mkswap /swapfile
+        - name: Enable swapfile
+          ansible.builtin.command: swapon /swapfile
+        - name: Persist swapfile in fstab
+          ansible.builtin.mount:
+            name: none
+            src: /swapfile
+            fstype: swap
+            opts: sw
+            state: present
+
     - name: Install dependencies (npm ci if lockfile exists)
       become_user: "{{ app_owner }}"
       ansible.builtin.shell: |
         set -e
+        npm config set jobs 2
         if [ -f package-lock.json ]; then
-          npm ci
+          npm ci --no-audit --no-fund --prefer-offline
         else
-          npm install
+          npm install --no-audit --no-fund --prefer-offline
         fi
       args:
         chdir: "{{ working_dir }}"
         executable: /bin/bash
+      environment:
+        NODE_OPTIONS: "--max-old-space-size=512"
 
     - name: Build Next.js app
       become_user: "{{ app_owner }}"
