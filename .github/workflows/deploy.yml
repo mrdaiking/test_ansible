@@ -65,6 +65,32 @@ jobs:
             ssh-keyscan -H "${{ secrets.ANSIBLE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           fi
 
+      - name: Show runner public IP (for Security Group allowlist)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner public IP:" $(curl -fsSL https://checkip.amazonaws.com || echo "unknown")
+          echo "Target host: ${{ secrets.ANSIBLE_HOST }}"
+
+      - name: Check SSH reachability to target
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST="${{ secrets.ANSIBLE_HOST }}"
+          echo "Checking TCP/22 to ${HOST}..."
+          if command -v nc >/dev/null 2>&1; then
+            nc -vz -w 5 "$HOST" 22 || {
+              echo "Cannot reach ${HOST}:22 from GitHub runner. Likely Security Group, NACL, subnet, or no public IP." >&2
+              exit 1
+            }
+          else
+            # Fallback using bash's /dev/tcp
+            timeout 6 bash -c "</dev/tcp/${HOST}/22" 2>/dev/null || {
+              echo "Cannot reach ${HOST}:22 from GitHub runner. Likely Security Group, NACL, subnet, or no public IP." >&2
+              exit 1
+            }
+          fi
+
       - name: Run Ansible Playbook 1
         shell: bash
         run: |
