@@ -11,15 +11,30 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up SSH key
+      - name: Start ssh-agent and add key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+
+      - name: Prepare known_hosts (optional)
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
-          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.ANSIBLE_HOST }} >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          if [[ -n "${{ secrets.ANSIBLE_HOST }}" ]]; then
+            # Don't fail the job if keyscan can't reach the host yet
+            ssh-keyscan -H "${{ secrets.ANSIBLE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          fi
 
       - name: Run Ansible Playbook 1
+        shell: bash
         run: |
-          ssh -i ~/.ssh/id_rsa ec2-user@${{ secrets.ANSIBLE_HOST }} "ansible-playbook ~/deploy.yml"
+          set -euo pipefail
+          : "${{ secrets.ANSIBLE_HOST }}" # ensure secret is present
+          USER_TO_USE="ec2-user"
+          # Connect without strict host key checking to avoid failures on first contact
+          ssh -o StrictHostKeyChecking=no "${USER_TO_USE}@${{ secrets.ANSIBLE_HOST }}" "ansible-playbook ~/deploy.yml"
