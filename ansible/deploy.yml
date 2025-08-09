@@ -21,7 +21,6 @@
       ansible.builtin.dnf:
         name:
           - git
-          - curl
           - ca-certificates
         state: present
 
