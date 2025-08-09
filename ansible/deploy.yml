@@ -124,7 +124,6 @@
       become_user: "{{ app_owner }}"
       ansible.builtin.shell: |
         set -e
-        npm config set jobs 2
         if [ -f package-lock.json ]; then
           npm ci --no-audit --no-fund --prefer-offline
         else
