@@ -102,7 +102,7 @@
         fi
       args:
   chdir: "{{ working_dir }}"
-        executable: /bin/bash
+  executable: /bin/bash
 
     - name: Build Next.js app
       become_user: "{{ app_owner }}"
@@ -111,7 +111,7 @@
         npm run build
       args:
   chdir: "{{ working_dir }}"
-        executable: /bin/bash
+  executable: /bin/bash
 
     - name: Start or restart app with PM2
       become_user: "{{ app_owner }}"
@@ -121,4 +121,4 @@
         pm2 save
       args:
   chdir: "{{ working_dir }}"
-        executable: /bin/bash
+  executable: /bin/bash
